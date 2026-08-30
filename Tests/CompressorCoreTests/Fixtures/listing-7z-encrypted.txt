@@ -1,0 +1,59 @@
+
+7-Zip (z) 26.02 (arm64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-06-25
+ 64-bit arm_v:8.5-A locale=en_US.UTF-8 Threads:12 OPEN_MAX:1048576, ASM
+
+Scanning the drive for archives:
+1 file, 249 bytes (1 KiB)
+
+Listing archive: enc.7z
+
+--
+Path = enc.7z
+Type = 7z
+Physical Size = 249
+Headers Size = 217
+Method = LZMA2:12 7zAES
+Solid = +
+Blocks = 1
+
+----------
+Path = src
+Size = 0
+Packed Size = 0
+Modified = 2026-08-19 22:29:51.9291379
+Attributes = D drwxr-xr-x
+CRC = 
+Encrypted = -
+Method = 
+Block = 
+
+Path = src/sub
+Size = 0
+Packed Size = 0
+Modified = 2026-08-19 22:29:51.9293299
+Attributes = D drwxr-xr-x
+CRC = 
+Encrypted = -
+Method = 
+Block = 
+
+Path = src/a.txt
+Size = 12
+Packed Size = 32
+Modified = 2026-08-19 22:29:51.9292520
+Attributes = A -rw-r--r--
+CRC = ED503469
+Encrypted = +
+Method = LZMA2:12 7zAES:19
+Block = 0
+
+Path = src/sub/b.txt
+Size = 11
+Packed Size = 
+Modified = 2026-08-19 22:29:51.9293871
+Attributes = A -rw-r--r--
+CRC = D1DEA7B3
+Encrypted = +
+Method = LZMA2:12 7zAES:19
+Block = 0
+

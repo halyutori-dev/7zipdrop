@@ -1,0 +1,51 @@
+
+7-Zip (z) 26.02 (arm64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-06-25
+ 64-bit arm_v:8.5-A locale=en_US.UTF-8 Threads:12 OPEN_MAX:1048576, ASM
+
+Scanning the drive for archives:
+1 file, 264 bytes (1 KiB)
+
+Listing archive: slip-rel.zip
+
+--
+Path = slip-rel.zip
+Type = zip
+Physical Size = 264
+
+----------
+Path = good.txt
+Folder = -
+Size = 9
+Packed Size = 9
+Modified = 2026-08-19 22:29:06
+Created = 
+Accessed = 
+Attributes = V 01800000 0rw-------
+Encrypted = -
+Comment = 
+CRC = 3024C2EE
+Method = Store
+Characteristics = 
+Host OS = Unix
+Version = 20
+Volume Index = 0
+Offset = 0
+
+Path = ../../../ESCAPED-REL.txt
+Folder = -
+Size = 17
+Packed Size = 17
+Modified = 2026-08-19 22:29:06
+Created = 
+Accessed = 
+Attributes = V 01800000 0rw-------
+Encrypted = -
+Comment = 
+CRC = 496E7E49
+Method = Store
+Characteristics = 
+Host OS = Unix
+Version = 20
+Volume Index = 0
+Offset = 47
+

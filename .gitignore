@@ -1,0 +1,17 @@
+# Build products
+.build/
+build/
+.swiftpm/
+*.xcodeproj
+DerivedData/
+
+# The 7-Zip console binary is fetched and SHA-256 verified by scripts/fetch-7zz.sh
+# (run automatically by `make app` / `make test`), so it is not committed here. See
+# NOTICE.md for the license and the upstream source.
+vendor/
+
+# Design inputs and scratch. The icon artwork that the build actually uses lives in
+# Resources/AppIcon-1024.png.
+tmp/
+
+.DS_Store

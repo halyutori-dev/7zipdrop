@@ -1,0 +1,29 @@
+
+7-Zip (z) 26.02 (arm64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-06-25
+ 64-bit arm_v:8.5-A locale=en_US.UTF-8 Threads:12 OPEN_MAX:1048576, ASM
+
+Scanning the drive for archives:
+1 file, 7831 bytes (8 KiB)
+
+Listing archive: bomb.7z
+
+--
+Path = bomb.7z
+Type = 7z
+Physical Size = 7831
+Headers Size = 122
+Method = LZMA2:26
+Solid = -
+Blocks = 1
+
+----------
+Path = zeros.bin
+Size = 52428800
+Packed Size = 7709
+Modified = 2026-08-19 22:30:29.9041367
+Attributes = A -rw-r--r--
+CRC = 0E9B9B34
+Encrypted = -
+Method = LZMA2:26
+Block = 0
+
