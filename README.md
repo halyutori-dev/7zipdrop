@@ -141,12 +141,32 @@ Tests/CompressorCoreTests/       251 テスト（実 7zz を叩く end-to-end �
 docs/VERIFIED-7ZIP-CONTRACT.md   実挙動の検証記録 41 項目（この設計の根拠）
 docs/SECURITY.md                 セキュリティ / OSS 監査結果
 docs/VERIFICATION.md             何をどこまで検証したか（未検証も明記）
+Resources/AppIcon-1024.png       アプリアイコンの原画（1024x1024）
 scripts/fetch-7zz.sh             公式バイナリ取得（SHA-256 不一致なら拒否）
 scripts/make-app.sh              .app 組み立て + 署名
-scripts/security-audit.sh        監査ゲート
-scripts/mutation-check.sh        テストの検出力チェック
-vendor/                          同梱する 7-Zip 26.02
+scripts/make-icon.swift          原画から AppIcon.iconset を生成（macOS のグリッドに合わせる）
+scripts/security-audit.sh        監査ゲート（53 項目）
+scripts/mutation-check.sh        テストの検出力チェック（47 種類の欠陥注入）
+scripts/check-tooltips.sh        設定行のツールチップ設置チェック
+vendor/                          同梱する 7-Zip 26.02（git 管理外。`make app` が取得します）
 ```
+
+`vendor/` と `build/` と `tmp/` は git 管理外です。クローン直後は `make app` が
+`scripts/fetch-7zz.sh` で 7zz を取得し、SHA-256 が一致しなければ中断します。
+
+## アプリアイコン
+
+`Resources/AppIcon-1024.png` を差し替えて `make app` すれば反映されます。原画は
+**フルブリードの 1024x1024**（角丸なし・余白なし）で置いてください。`scripts/make-icon.swift`
+が macOS のアイコングリッドに合わせます:
+
+- 本体を 824x824 に縮小し、1024 のキャンバス中央に配置（各辺 100px の余白）
+- 角丸は `CALayer` の `cornerCurve = .continuous`（OS 自身の squircle）で半径 185.4px
+- 16〜1024 の 10 スライスを生成し `iconutil` で `AppIcon.icns` にまとめる
+
+この数値は推測ではなく、`/System/Library/CoreServices/Finder.icns` を展開して実測した
+グリッド（本体は canvas の約 80.5%、角丸は本体の約 22%）に合わせたものです。原画をそのまま
+使うと、Dock で角の立った四角い・他より大きいアイコンになります。
 
 ## ライセンス
 
