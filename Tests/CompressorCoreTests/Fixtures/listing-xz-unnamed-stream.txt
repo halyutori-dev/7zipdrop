@@ -1,0 +1,22 @@
+
+7-Zip (z) 26.02 (arm64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-06-25
+ 64-bit arm_v:8.5-A locale=en_US.UTF-8 Threads:12 OPEN_MAX:1048576, ASM
+
+Scanning the drive for archives:
+1 file, 7400 bytes (8 KiB)
+
+Listing archive: zeros-50m.xz
+
+--
+Path = zeros-50m.xz
+Type = xz
+Physical Size = 7400
+Method = LZMA2:23 CRC64
+Streams = 1
+Blocks = 1
+
+----------
+Size = 50000000
+Packed Size = 7400
+Method = LZMA2:23 CRC64
+

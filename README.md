@@ -96,7 +96,7 @@ zip は既定が ZipCrypto（実質破られる）なので、**常に AES-256 �
 | **完了後に Finder で表示 / 通知** | 保存先が「指定フォルダ」のとき、どこに出たか分からなくなるのを防ぎます |
 | **多スレッド切り替え** | バックグラウンドで走らせたいときに CPU を占有させない選択肢 |
 | **展開: Zip Slip / 絶対パスの拒否** | 7-Zip 26.02 自身も無害化しますが、**exit 0 のまま黙ってパスを書き換える**ため、独立に検査して拒否します |
-| **展開: zip bomb ガード** | 展開前に申告サイズを読み、上限と実際の空き容量（1 GiB の余裕込み）で止めます |
+| **展開: zip bomb ガード** | 展開前に申告サイズを読み、上限と実際の空き容量（1 GiB の余裕込み）で止めます。bz2 / zst などサイズを申告しない形式と、申告が当てにならない gzip は、**展開中に実際の書き込み量を測って**同じ条件で止めます |
 | **展開: symlink 脱出の事後検査** | リンク先は listing に出ないため、展開後に実ツリーを（リンクを辿らずに）走査し、外を指すリンクがあれば結果を破棄します |
 | **分割書庫は `.002` を渡しても開ける** | 7zz は `.001` しか受け付けないため、こちらで読み替えます |
 
@@ -137,16 +137,16 @@ zip は既定が ZipCrypto（実質破られる）なので、**常に AES-256 �
 ```
 Sources/CompressorCore/          圧縮ロジック（AppKit 非依存・テスト対象）
 Sources/SevenZipCompressorApp/   SwiftUI アプリ
-Tests/CompressorCoreTests/       251 テスト（実 7zz を叩く end-to-end と悪意ある書庫の fixture を含む）
-docs/VERIFIED-7ZIP-CONTRACT.md   実挙動の検証記録 41 項目（この設計の根拠）
+Tests/CompressorCoreTests/       264 テスト（実 7zz を叩く end-to-end と悪意ある書庫の fixture を含む）
+docs/VERIFIED-7ZIP-CONTRACT.md   実挙動の検証記録 43 項目（この設計の根拠）
 docs/SECURITY.md                 セキュリティ / OSS 監査結果
 docs/VERIFICATION.md             何をどこまで検証したか（未検証も明記）
 Resources/AppIcon-1024.png       アプリアイコンの原画（1024x1024）
 scripts/fetch-7zz.sh             公式バイナリ取得（SHA-256 不一致なら拒否）
 scripts/make-app.sh              .app 組み立て + 署名
 scripts/make-icon.swift          原画から AppIcon.iconset を生成（macOS のグリッドに合わせる）
-scripts/security-audit.sh        監査ゲート（53 項目）
-scripts/mutation-check.sh        テストの検出力チェック（47 種類の欠陥注入）
+scripts/security-audit.sh        監査ゲート（56 項目）
+scripts/mutation-check.sh        テストの検出力チェック（54 種類の欠陥注入）
 scripts/check-tooltips.sh        設定行のツールチップ設置チェック
 vendor/                          同梱する 7-Zip 26.02（git 管理外。`make app` が取得します）
 ```

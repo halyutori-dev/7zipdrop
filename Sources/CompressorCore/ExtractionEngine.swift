@@ -31,22 +31,34 @@ public struct ExtractionOutcome: Sendable, Equatable {
 
 public struct ExtractionEngine: Sendable {
     static let stagingPrefix = ".7zx-staging-"
+    /// How often an extraction whose size the listing cannot bound is measured. 7zz
+    /// decodes a stream of zeros at up to ~1.5 GB/s, so a bomb can overshoot by that much
+    /// per interval before SIGTERM lands; the 1 GiB disk headroom absorbs it, and the
+    /// ceiling is re-checked once more after exit so nothing over it is ever delivered.
+    static let budgetPollInterval: Duration = .milliseconds(100)
+
+    /// `Type` values 7zz reports for single-stream formats (contract #42). Detected from
+    /// content, so a renamed file is still recognised.
+    static let singleStreamTypes: Set<String> = ["gzip", "bzip2", "xz", "zstd", "lzma", "Z"]
 
     private let runner: any SevenZipRunning
     private let probe: any FileSystemProbing
     private let mover: any FileMoving
     private let remover: any SourceRemoving
+    private let freeSpace: @Sendable (URL) -> Int64
 
     public init(
         runner: any SevenZipRunning = LiveSevenZipRunner(),
         probe: any FileSystemProbing = LiveFileSystemProbe(),
         mover: any FileMoving = AtomicFileMover(),
-        remover: any SourceRemoving = TrashSourceRemover()
+        remover: any SourceRemoving = TrashSourceRemover(),
+        freeSpace: @escaping @Sendable (URL) -> Int64 = ExtractionEngine.availableBytes
     ) {
         self.runner = runner
         self.probe = probe
         self.mover = mover
         self.remover = remover
+        self.freeSpace = freeSpace
     }
 
     public func extract(
@@ -61,7 +73,7 @@ public struct ExtractionEngine: Sendable {
         let listing = try await readListing(archive: archive, request: request)
         try ExtractionSafety.check(
             listing, settings: request.settings,
-            availableBytes: Self.availableBytes(at: destination))
+            availableBytes: freeSpace(destination))
 
         let staging = destination.appendingPathComponent(Self.stagingPrefix + UUID().uuidString)
         try createStaging(staging, destination: destination)
@@ -75,7 +87,9 @@ public struct ExtractionEngine: Sendable {
                 executable: request.executable, archive: archive,
                 into: content, password: request.password,
                 overwriteExisting: request.settings.overwriteExisting),
-            collector: collector, onEvent: onEvent)
+            collector: collector, onEvent: onEvent,
+            watching: content,
+            budget: outputBudget(for: listing, of: archive, settings: request.settings, destination: destination))
 
         guard status.isUsableArchive else {
             if let problem = SevenZipDiagnostics.passwordProblem(
@@ -95,14 +109,16 @@ public struct ExtractionEngine: Sendable {
             let innerListing = try await readListing(archive: inner, request: request)
             try ExtractionSafety.check(
                 innerListing, settings: request.settings,
-                availableBytes: Self.availableBytes(at: destination))
+                availableBytes: freeSpace(destination))
             let innerOutput = staging.appendingPathComponent("inner", isDirectory: true)
             let innerStatus = try await run(
                 SevenZipCommandBuilder.extract(
                     executable: request.executable, archive: inner,
                     into: innerOutput, password: request.password,
                     overwriteExisting: request.settings.overwriteExisting),
-                collector: collector, onEvent: onEvent)
+                collector: collector, onEvent: onEvent,
+                watching: innerOutput,
+                budget: outputBudget(for: innerListing, of: inner, settings: request.settings, destination: destination))
             if innerStatus == .cancelled { throw CompressorError.cancelled }
             guard innerStatus.isUsableArchive else {
                 throw CompressorError.extractionFailed(
@@ -116,7 +132,7 @@ public struct ExtractionEngine: Sendable {
         // 4. Deliver under a name nothing else owns.
         let delivered = try deliver(from: current, archive: archive,
                                     into: destination, settings: request.settings)
-        let measurements = try measure(delivered)
+        let measurements = measure(delivered)
 
         return ExtractionOutcome(
             outputURL: delivered,
@@ -186,13 +202,112 @@ public struct ExtractionEngine: Sendable {
     private func run(
         _ invocation: SevenZipInvocation,
         collector: OutputCollector,
-        onEvent: @escaping @Sendable (SevenZipOutputParser.Event) -> Void
+        onEvent: @escaping @Sendable (SevenZipOutputParser.Event) -> Void,
+        watching output: URL,
+        budget: OutputBudget?
     ) async throws -> SevenZipExitStatus {
-        let code = try await runner.run(invocation) { chunk in
+        let onOutput: @Sendable (Data) -> Void = { chunk in
             for event in collector.consume(chunk) { onEvent(event) }
         }
+        let code: Int32
+        var violation: CompressorError?
+        if let budget {
+            (code, violation) = try await runWatched(invocation, onOutput: onOutput, output: output, budget: budget)
+        } else {
+            code = try await runner.run(invocation, onOutput: onOutput)
+        }
         for event in collector.finish() { onEvent(event) }
+        // Checked before the exit status: the 255 that follows our own SIGTERM is not a
+        // user cancellation.
+        if let violation { throw violation }
         return SevenZipExitStatus(code: code)
+    }
+
+    /// What an extraction may write before 7zz is stopped.
+    struct OutputBudget: Sendable {
+        let ceiling: Int64
+        /// Free space at the start, less the headroom that must be left alone.
+        let diskAllowance: Int64
+        let availableBytes: Int64
+
+        func violation(written: Int64) -> CompressorError? {
+            if written > ceiling {
+                return .extractionTooLarge(totalBytes: written, limitBytes: ceiling)
+            }
+            if written > diskAllowance {
+                return .notEnoughDiskSpace(neededBytes: written, availableBytes: availableBytes)
+            }
+            return nil
+        }
+    }
+
+    /// Armed only when the listing cannot bound the output: a size it does not declare
+    /// (contract #42), or a single-stream format, whose one declaration may be wrong —
+    /// gzip stores the size modulo 2^32. Either way the output is small in entry count,
+    /// so measuring it repeatedly is cheap; a fully declared multi-entry archive is
+    /// bounded by `ExtractionSafety.check` alone and is never walked mid-extraction.
+    func outputBudget(
+        for listing: ArchiveListing, of archive: URL, settings: ExtractionSettings, destination: URL
+    ) -> OutputBudget? {
+        let singleStream = !listing.unnamedStreamSizes.isEmpty
+            || listing.format.map(Self.singleStreamTypes.contains) == true
+            || ArchiveDetection.isSingleStreamCompressor(archive)
+        guard listing.hasUndeclaredSizes || singleStream else { return nil }
+        let available = freeSpace(destination)
+        return OutputBudget(
+            ceiling: settings.maximumTotalBytes,
+            diskAllowance: available - ExtractionSafety.diskHeadroomBytes,
+            availableBytes: available)
+    }
+
+    private enum WatchedEvent: Sendable {
+        case exited(Int32)
+        case exceeded(CompressorError)
+        case stopped
+    }
+
+    /// Runs 7zz next to a watchdog that measures what it has written. When the budget is
+    /// exceeded the runner is cancelled — SIGTERM, then SIGKILL after the grace period —
+    /// and its exit is still awaited, so the staging directory is not removed under a
+    /// live process.
+    private func runWatched(
+        _ invocation: SevenZipInvocation,
+        onOutput: @escaping @Sendable (Data) -> Void,
+        output: URL,
+        budget: OutputBudget
+    ) async throws -> (code: Int32, violation: CompressorError?) {
+        try await withThrowingTaskGroup(of: WatchedEvent.self) { group in
+            group.addTask { .exited(try await runner.run(invocation, onOutput: onOutput)) }
+            group.addTask {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: Self.budgetPollInterval)
+                    if Task.isCancelled { break }
+                    if let violation = budget.violation(written: measure(output).totalBytes) {
+                        return .exceeded(violation)
+                    }
+                }
+                return .stopped
+            }
+            var violation: CompressorError?
+            while let event = try await group.next() {
+                switch event {
+                case .exited(let code):
+                    group.cancelAll()
+                    // A stream can finish between two polls; what it left behind counts too.
+                    if violation == nil {
+                        violation = budget.violation(written: measure(output).totalBytes)
+                    }
+                    return (code, violation)
+                case .exceeded(let found):
+                    violation = found
+                    group.cancelAll()
+                case .stopped:
+                    continue
+                }
+            }
+            // The runner task always yields `.exited` or throws, so this is unreachable.
+            throw CompressorError.cancelled
+        }
     }
 
     private func createStaging(_ staging: URL, destination: URL) throws {
@@ -297,7 +412,7 @@ public struct ExtractionEngine: Sendable {
         return target
     }
 
-    private func measure(_ url: URL) throws -> (fileCount: Int, totalBytes: Int64) {
+    private func measure(_ url: URL) -> (fileCount: Int, totalBytes: Int64) {
         guard Self.isDirectory(url) else {
             return (1, Int64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0))
         }
@@ -329,7 +444,7 @@ public struct ExtractionEngine: Sendable {
 
     /// Unknown capacity does not block extraction — the absolute ceiling in
     /// `ExtractionSettings.maximumTotalBytes` still applies.
-    static func availableBytes(at url: URL) -> Int64 {
+    public static func availableBytes(at url: URL) -> Int64 {
         if let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
            let capacity = values.volumeAvailableCapacityForImportantUsage {
             return Int64(capacity)

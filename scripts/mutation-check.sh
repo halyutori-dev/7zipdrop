@@ -8,7 +8,15 @@ cd "${ROOT}"
 failures=0
 
 run_suite() {
-  swift test 2>&1 | grep -E "Test run with .* (passed|failed)" | tail -1
+  local out line
+  out="$(swift test 2>&1)"
+  line="$(grep -E "Test run with .* (passed|failed)" <<<"${out}" | tail -1)"
+  # A mutation that crashes the test process (e.g. an unhandled SIGPIPE) never prints a
+  # summary line; the suite still went red, so report it as a failure, not as unknown.
+  if [ -z "${line}" ] && grep -q "unexpected signal code" <<<"${out}"; then
+    line="failed (test process killed by a signal)"
+  fi
+  echo "${line}"
 }
 
 run_tooltip_gate() {
@@ -72,11 +80,17 @@ echo
 echo "extraction defences:"
 mutate "entry-path allowlist accepts everything"                 "$L" 's/guard !path\.isEmpty else \{ return false \}/if true { return true }/'
 mutate "entry-path check rejects harmless \".\" components"        "$L" 's/if component\.isEmpty \|\| component == "\.\." \{ return false \}/if component.isEmpty || component == "." || component == ".." { return false }/'
-mutate "skip the safety gate before extracting"                  "$E" 's/try ExtractionSafety\.check\(\n            listing, settings: request\.settings,\n            availableBytes: Self\.availableBytes\(at: destination\)\)//'
+mutate "skip the safety gate before extracting"                  "$E" 's/try ExtractionSafety\.check\(\n            listing, settings: request\.settings,\n            availableBytes: freeSpace\(destination\)\)//'
 mutate "symlink containment check becomes a no-op"               "$E" 's/func assertNoSymlinkEscapes\(in root: URL\) throws \{/func assertNoSymlinkEscapes(in root: URL) throws { if true { return }/'
 mutate "expansion-size ceiling ignored"                          "$XS" 's/guard total <= settings\.maximumTotalBytes else \{/if false {/'
 mutate "free-space check ignored"                                "$XS" 's/guard total <= usable else \{/if false {/'
 mutate "volume parts are not redirected to .001"                 "$E" 's/guard let first = ArchiveDetection\.firstVolume\(of: url\) else \{ return url \}/return url\n        guard let first = ArchiveDetection.firstVolume(of: url) else { return url }/'
+mutate "declared total wraps around instead of saturating"       "$L" 's/total = overflow \? Int64\.max : sum/total = sum/'
+mutate "a size beyond Int64 is read as 0"                        "$L" 's/return Int64\(text\) \?\? Int64\.max/return Int64(text) ?? 0/'
+mutate "path-less single-stream blocks dropped again"             "$L" 's/                unnamedStreamSizes\.append\(declaredSize\(block\["Size"\]\)\)\n//'
+mutate "output watchdog never armed"                             "$E" 's/guard listing\.hasUndeclaredSizes \|\| singleStream else \{ return nil \}/guard false else { return nil }/'
+mutate "watchdog ignores the content-detected format"            "$E" 's/\n            \|\| listing\.format\.map\(Self\.singleStreamTypes\.contains\) == true//'
+mutate "no final measurement once 7zz has exited"                "$E" 's/if violation == nil \{/if false {/'
 mutate "single root folder gets wrapped a second time"           "$E" 's/            Self\.isDirectory\(child\) \|\| !settings\.guaranteeContainingFolder/            !settings.guaranteeContainingFolder/'
 mutate "delivery overwrites instead of claiming exclusively"     "$M" 's/UInt32\(RENAME_EXCL\)/UInt32(0)/'
 mutate "delivery uses link(2), refused in protected folders"      "$M" 's/    public func claim\(from source: URL, to destination: URL\) throws \{\n        try exclusiveRename\(from: source, to: destination\)\n    \}/    public func claim(from source: URL, to destination: URL) throws {\n        let r = source.withUnsafeFileSystemRepresentation { s in destination.withUnsafeFileSystemRepresentation { d in link(s!, d!) == 0 ? 0 : errno } }\n        if r != 0 { throw CompressorError.linkFailed(code: r, path: destination.path) }\n        try? FileManager.default.removeItem(at: source)\n    }/'
@@ -97,6 +111,7 @@ mutate "empty size limit becomes zero instead of unlimited"       "$AS" 's/setti
 
 
 RN=Sources/CompressorCore/SevenZipRunner.swift
+mutate "stdin write can raise SIGPIPE again"                     "$RN" 's/                _ = fcntl\(writer\.fileDescriptor, F_SETNOSIGPIPE, 1\)\n//'
 mutate "read the pipe with FileHandle (only yields at EOF)"       "$RN" 's/Self\.stream\(from: reader\.fileDescriptor, to: onOutput\)/while let chunk = try? reader.read(upToCount: 64 * 1024), !chunk.isEmpty { onOutput(chunk) }/'
 
 

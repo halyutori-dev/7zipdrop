@@ -74,6 +74,15 @@ struct ArchiveListingTests {
         #expect(ArchiveListingParser.parse(try fixture("listing-7z-bomb")).isSafeToExtract)
     }
 
+    @Test("an ordinary multi-entry archive has no unnamed streams and nothing undeclared")
+    func ordinaryArchivesAreFullyDeclared() throws {
+        for name in ["listing-7z-with-symlinks", "listing-7z-encrypted", "listing-zip-traversal"] {
+            let listing = ArchiveListingParser.parse(try fixture(name))
+            #expect(listing.unnamedStreamSizes.isEmpty, "\(name)")
+            #expect(!listing.hasUndeclaredSizes, "\(name)")
+        }
+    }
+
     @Test func emptyOrGarbageInputYieldsNoEntriesRatherThanCrashing() {
         #expect(ArchiveListingParser.parse("").entries.isEmpty)
         #expect(ArchiveListingParser.parse("total garbage\nwith no separator\n").entries.isEmpty)
@@ -81,8 +90,8 @@ struct ArchiveListingTests {
         #expect(ArchiveListingParser.parse("----------\nPath = \n").entries.isEmpty)
     }
 
-    @Test("a block without a Path key is skipped instead of becoming a nameless entry")
-    func skipsBlocksWithoutAPath() {
+    @Test("a block without a Path key is counted as a stream, never as a nameless entry")
+    func pathlessBlocksCountButAreNotEntries() {
         let text = """
         ----------
         Size = 10
@@ -92,7 +101,46 @@ struct ArchiveListingTests {
         Size = 3
         Attributes = A -rw-r--r--
         """
-        #expect(ArchiveListingParser.parse(text).entries.map(\.path) == ["real.txt"])
+        let listing = ArchiveListingParser.parse(text)
+        #expect(listing.entries.map(\.path) == ["real.txt"])
+        #expect(listing.unnamedStreamSizes == [10])
+        #expect(listing.totalUncompressedSize == 13)
+    }
+
+    @Test("a single-stream archive has no Path line, but its declared size still counts")
+    func countsTheUnnamedStreamOfASingleStreamArchive() throws {
+        // 7,400 bytes of xz that expands to 50,000,000 (measured with 7zz 26.02)
+        let listing = ArchiveListingParser.parse(try fixture("listing-xz-unnamed-stream"))
+        #expect(listing.entries.isEmpty)
+        #expect(listing.totalUncompressedSize == 50_000_000)
+        #expect(!listing.hasUndeclaredSizes)
+        #expect(listing.isSafeToExtract)
+    }
+
+    @Test("bzip2 declares no size at all, which is reported rather than read as zero")
+    func reportsAnUndeclaredSize() throws {
+        // 178 bytes of bzip2 that expands to 200,000,000; 7zz prints `Size = ` empty
+        let listing = ArchiveListingParser.parse(try fixture("listing-bz2-undeclared-size"))
+        #expect(listing.hasUndeclaredSizes)
+        #expect(listing.isSafeToExtract)
+    }
+
+    @Test("declared sizes whose sum passes Int64.max saturate instead of trapping")
+    func saturatesAnOverflowingTotal() throws {
+        // two zip64 entries of 0x6000000000000000 bytes each
+        let listing = ArchiveListingParser.parse(try fixture("listing-zip-sizes-overflow"))
+        #expect(listing.fileEntries.count == 2)
+        #expect(listing.totalUncompressedSize == Int64.max)
+    }
+
+    @Test("a declared size beyond Int64 is taken as the maximum, never as zero")
+    func saturatesASizeBeyondInt64() throws {
+        // zip64 entry declaring 18446744073709551600 bytes
+        let listing = ArchiveListingParser.parse(try fixture("listing-zip-size-beyond-int64"))
+        let entry = try #require(listing.fileEntries.first)
+        #expect(entry.size == Int64.max)
+        #expect(listing.totalUncompressedSize == Int64.max)
+        #expect(!listing.hasUndeclaredSizes)
     }
 }
 
@@ -157,6 +205,18 @@ struct ExtractionLimitTests {
         }
         settings.allowUnsafeEntryPaths = true
         try ExtractionSafety.check(unsafe, settings: settings, availableBytes: Int64.max / 2)
+    }
+
+    @Test("an archive declaring an absurd total is refused, not crashed on")
+    func refusesAnOverflowingDeclaration() throws {
+        let url = try #require(Bundle.module.url(
+            forResource: "listing-zip-sizes-overflow", withExtension: "txt", subdirectory: "Fixtures"))
+        let listing = ArchiveListingParser.parse(String(decoding: try Data(contentsOf: url), as: UTF8.self))
+        let settings = ExtractionSettings.default
+        #expect(throws: CompressorError.extractionTooLarge(
+            totalBytes: Int64.max, limitBytes: settings.maximumTotalBytes)) {
+            try ExtractionSafety.check(listing, settings: settings, availableBytes: Int64.max)
+        }
     }
 
     @Test func anEmptyArchiveIsNotAnError() throws {

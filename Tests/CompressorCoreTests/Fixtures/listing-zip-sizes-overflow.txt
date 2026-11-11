@@ -1,0 +1,51 @@
+
+7-Zip (z) 26.02 (arm64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-06-25
+ 64-bit arm_v:8.5-A locale=en_US.UTF-8 Threads:12 OPEN_MAX:1048576, ASM
+
+Scanning the drive for archives:
+1 file, 296 bytes (1 KiB)
+
+Listing archive: sizes-overflow.zip
+
+--
+Path = sizes-overflow.zip
+Type = zip
+Physical Size = 296
+
+----------
+Path = f0.bin
+Folder = -
+Size = 6917529027641081856
+Packed Size = 1
+Modified = 
+Created = 
+Accessed = 
+Attributes = 
+Encrypted = -
+Comment = 
+CRC = 8CDC1683
+Method = Store
+Characteristics = Zip64
+Host OS = FAT
+Version = 45
+Volume Index = 0
+Offset = 0
+
+Path = f1.bin
+Folder = -
+Size = 6917529027641081856
+Packed Size = 1
+Modified = 
+Created = 
+Accessed = 
+Attributes = 
+Encrypted = -
+Comment = 
+CRC = 8CDC1683
+Method = Store
+Characteristics = Zip64
+Host OS = FAT
+Version = 45
+Volume Index = 0
+Offset = 57
+

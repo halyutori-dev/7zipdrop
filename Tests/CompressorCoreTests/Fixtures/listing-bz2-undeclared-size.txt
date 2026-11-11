@@ -1,0 +1,17 @@
+
+7-Zip (z) 26.02 (arm64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-06-25
+ 64-bit arm_v:8.5-A locale=en_US.UTF-8 Threads:12 OPEN_MAX:1048576, ASM
+
+Scanning the drive for archives:
+1 file, 178 bytes (1 KiB)
+
+Listing archive: bomb-200m.bz2
+
+--
+Path = bomb-200m.bz2
+Type = bzip2
+
+----------
+Size = 
+Packed Size = 
+

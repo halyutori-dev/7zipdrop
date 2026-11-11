@@ -50,14 +50,17 @@ struct ExtractionEndToEndTests {
             password: password, executable: TestSupport.sevenZipURL))
     }
 
-    private func fixture(_ name: String) throws -> URL {
-        try #require(Bundle.module.url(forResource: name, withExtension: "zip", subdirectory: "Fixtures"))
+    private func fixture(_ name: String, extension fileExtension: String = "zip") throws -> URL {
+        try #require(Bundle.module.url(
+            forResource: name, withExtension: fileExtension, subdirectory: "Fixtures"))
     }
 
     /// Fixtures live inside the test bundle; copy so extraction happens in a temp folder.
-    private func stagedFixture(_ name: String) throws -> (root: URL, archive: URL) {
+    private func stagedFixture(
+        _ name: String, extension fileExtension: String = "zip"
+    ) throws -> (root: URL, archive: URL) {
         let root = try TestSupport.makeTemporaryDirectory()
-        let source = try fixture(name)
+        let source = try fixture(name, extension: fileExtension)
         let archive = root.appendingPathComponent(source.lastPathComponent)
         try FileManager.default.copyItem(at: source, to: archive)
         return (root, archive)
@@ -442,5 +445,108 @@ struct ExtractionEndToEndTests {
         _ = try await extractor.extract(request(archive, settings()))
         #expect(FileManager.default.fileExists(atPath: archive.path))
         #expect(try Data(contentsOf: archive) == before)
+    }
+
+    // MARK: - sizes the archive does not declare (contract #42)
+
+    /// 178 bytes of bzip2 that expand to 200,000,000 zero bytes. `7zz l -slt` prints
+    /// `Size = ` for it, so nothing before extraction can tell how big it is.
+    private let bzip2Bomb = "bomb-200m"
+
+    @Test("an undeclared-size stream is stopped once it passes the configured ceiling")
+    func stopsAnUndeclaredStreamAtTheCeiling() async throws {
+        let (root, archive) = try stagedFixture(bzip2Bomb, extension: "bz2")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ceiling: Int64 = 10 * 1024 * 1024
+
+        await #expect {
+            try await extractor.extract(request(archive, settings(maximumTotalBytes: ceiling)))
+        } throws: { error in
+            guard case .extractionTooLarge(let written, let limit)? = error as? CompressorError else { return false }
+            return limit == ceiling && written > ceiling
+        }
+        #expect(TestSupport.entryNames(in: root) == [archive.lastPathComponent])
+    }
+
+    @Test("an undeclared-size stream is stopped before it eats the disk's headroom")
+    func stopsAnUndeclaredStreamBeforeTheDiskFills() async throws {
+        let (root, archive) = try stagedFixture(bzip2Bomb, extension: "bz2")
+        defer { try? FileManager.default.removeItem(at: root) }
+        // The disk claims 10 MiB beyond the headroom; the size ceiling is off.
+        let tightDisk = ExtractionEngine(
+            freeSpace: { _ in ExtractionSafety.diskHeadroomBytes + 10 * 1024 * 1024 })
+
+        await #expect {
+            try await tightDisk.extract(request(archive, settings(maximumTotalBytes: Int64.max)))
+        } throws: { error in
+            guard case .notEnoughDiskSpace? = error as? CompressorError else { return false }
+            return true
+        }
+        #expect(TestSupport.entryNames(in: root) == [archive.lastPathComponent])
+    }
+
+    @Test("an undeclared-size stream within every limit is extracted in full")
+    func extractsAnUndeclaredStreamThatFits() async throws {
+        let (root, archive) = try stagedFixture(bzip2Bomb, extension: "bz2")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let outcome = try await extractor.extract(request(archive, settings()))
+        #expect(outcome.totalBytes == 200_000_000)
+    }
+
+    @Test("a stream that finishes between two measurements is still held to the ceiling")
+    func measuresOnceMoreAfterSevenZipExits() async throws {
+        // bzip2 → 12,000,000 bytes: just over the ceiling, and decoded by 7zz in far less
+        // than one poll interval, so only a measurement after exit can catch it
+        let (root, archive) = try stagedFixture("bomb-12m", extension: "bz2")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ceiling: Int64 = 10 * 1024 * 1024
+
+        await #expect {
+            try await extractor.extract(request(archive, settings(maximumTotalBytes: ceiling)))
+        } throws: { error in
+            guard case .extractionTooLarge? = error as? CompressorError else { return false }
+            return true
+        }
+        #expect(TestSupport.entryNames(in: root) == [archive.lastPathComponent])
+    }
+
+    @Test("a gzip is watched by what 7zz detects, not by its name — its declared size can lie")
+    func watchesAGzipWhateverItIsCalled() async throws {
+        // 20,000,000 zero bytes whose ISIZE trailer was rewritten to claim 1,024. (7zz also
+        // reports a CRC error for this one at the very end; a real gzip over 4 GiB has an
+        // ISIZE that is correct modulo 2^32 and would not — and cannot be a fixture.)
+        let (root, archive) = try stagedFixture("gzip-lying-isize", extension: "bin")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let ceiling: Int64 = 10 * 1024 * 1024
+
+        await #expect {
+            try await extractor.extract(request(archive, settings(maximumTotalBytes: ceiling)))
+        } throws: { error in
+            guard case .extractionTooLarge? = error as? CompressorError else { return false }
+            return true
+        }
+        #expect(TestSupport.entryNames(in: root) == [archive.lastPathComponent])
+    }
+
+    @Test("the watchdog arms exactly when the listing cannot bound the output")
+    func armsOnlyWhenTheListingCannotBoundTheOutput() {
+        func listing(format: String, sizes: [Int64?] = [], unnamed: [Int64?] = []) -> ArchiveListing {
+            ArchiveListing(format: format, physicalSize: 100, entries: sizes.enumerated().map {
+                ArchiveEntry(path: "f\($0.offset)", size: $0.element, packedSize: 1,
+                             isDirectory: false, isSymlink: false, isEncrypted: false)
+            }, unnamedStreamSizes: unnamed)
+        }
+        let plain = URL(fileURLWithPath: "/tmp/data.bin")
+        func armed(_ listing: ArchiveListing, _ archive: URL = plain) -> Bool {
+            extractor.outputBudget(for: listing, of: archive, settings: .default,
+                                   destination: URL(fileURLWithPath: "/tmp")) != nil
+        }
+        #expect(!armed(listing(format: "7z", sizes: [10, 20])))
+        #expect(armed(listing(format: "zip", sizes: [10, nil])))
+        #expect(armed(listing(format: "unknown", unnamed: [10])))
+        for type in ["gzip", "bzip2", "xz", "zstd", "lzma", "Z"] {
+            #expect(armed(listing(format: type, sizes: [10])), "\(type)")
+        }
+        #expect(armed(listing(format: "tar", sizes: [10]), URL(fileURLWithPath: "/tmp/x.tar.gz")))
     }
 }

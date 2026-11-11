@@ -111,6 +111,9 @@ echo "=== 7. secret handling ==="
 grep -q 'arguments.append("-p")' "${SRC}/CompressorCore/SevenZipInvocation.swift" \
   && ok "the add command passes a bare -p and answers the prompt on stdin" \
   || bad "the add command may be putting the password in argv"
+grep -q 'F_SETNOSIGPIPE' "${SRC}/CompressorCore/SevenZipRunner.swift" \
+  && ok "writing the password to a 7zz that already exited fails with EPIPE instead of killing the app (SIGPIPE)" \
+  || bad "the stdin write can raise SIGPIPE and terminate the app"
 grep -q '"-p\*\*\*\*\*\*\*\*"' "${SRC}/CompressorCore/SevenZipInvocation.swift" \
   && ok "any -p<secret> argument is masked before being shown or logged" \
   || bad "password redaction for displayed command lines is missing"
@@ -195,6 +198,17 @@ fi
 grep -q 'notEnoughDiskSpace' "$X" && grep -q 'extractionTooLarge' "$X" \
   && ok "a declared expansion size beyond the ceiling or the free space is refused (zip bomb)" \
   || bad "the expansion-size gate is missing"
+grep -q 'addingReportingOverflow' "$L" && grep -q 'Int64(text) ?? Int64.max' "$L" \
+  && ok "declared sizes saturate at Int64.max: an absurd declaration is refused, never wrapped, trapped or read as 0" \
+  || bad "declared sizes can overflow or be read as 0"
+# Formats that do not declare a size (contract #42) are only bounded while extracting, so
+# both extraction paths (outer and inner) must pass a budget.
+budget_calls="$(grep -c 'budget: outputBudget(for:' "$E" || true)"
+if [ "${budget_calls:-0}" -ge 2 ]; then
+  ok "output the listing cannot bound is measured while 7zz runs, on every extraction path (${budget_calls} call sites)"
+else
+  bad "the extraction output watchdog is not wired on every extraction path (${budget_calls:-0} call sites)"
+fi
 if grep -q '"x", overwriteExisting ? "-aoa" : "-aos"' "${SRC}/CompressorCore/SevenZipInvocation.swift"; then
   ok "extraction always answers the overwrite question up front (-aos, or -aoa when asked), so no prompt can stall it"
 else

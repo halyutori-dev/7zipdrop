@@ -165,6 +165,11 @@ public struct LiveSevenZipRunner: SevenZipRunning {
 
                 // Answer the password prompt, then close stdin so 7zz never waits on us.
                 let writer = input.fileHandleForWriting
+                // If 7zz exits before reading (a bad switch, an early fatal error), writing
+                // to the closed pipe raises SIGPIPE, which `try?` cannot catch and which
+                // terminates the whole app. With this flag the write fails with EPIPE
+                // instead, and the exit status still reports what went wrong.
+                _ = fcntl(writer.fileDescriptor, F_SETNOSIGPIPE, 1)
                 if let payload = invocation.stdinPayload {
                     try? writer.write(contentsOf: payload)
                 }

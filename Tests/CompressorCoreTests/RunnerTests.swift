@@ -35,6 +35,19 @@ struct RunnerTests {
         #expect(SevenZipExitStatus(code: code) != .success)
     }
 
+    @Test("a child that exits without reading the password does not take the app down with SIGPIPE")
+    func survivesAChildThatNeverReadsStdin() async throws {
+        // `true` never reads stdin; 1 MiB outlives the pipe buffer, so the write is
+        // guaranteed to hit a closed pipe. Unhandled, SIGPIPE kills this whole process.
+        let invocation = SevenZipInvocation(
+            executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+            arguments: [],
+            workingDirectory: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true),
+            stdinPayload: Data(count: 1024 * 1024))
+        let code = try await LiveSevenZipRunner().run(invocation) { _ in }
+        #expect(code == 0)
+    }
+
     @Test func launchingAMissingBinaryThrowsInsteadOfHanging() async throws {
         let bad = SevenZipInvocation(
             executableURL: URL(fileURLWithPath: "/nonexistent/7zz-\(UUID().uuidString)"),
